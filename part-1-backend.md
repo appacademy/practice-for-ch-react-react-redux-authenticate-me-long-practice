@@ -588,7 +588,7 @@ def test
   end
 
   if current_user
-    render json: current_user.slice('id', 'username', 'session_token')
+    render json: { user: current_user.slice('id', 'username', 'session_token') }
   else
     render json: ['No current user']
   end
@@ -615,10 +615,10 @@ Next, make a request with a `login` query string param:
 > await fetch('/api/test?login', { method: 'POST' }).then(res => res.json())
 ```
 
-You should see the 'Demo-lition' user returned! (If not, debug your `login!`
-method.) Take note of Demo-lition's `session_token`.
+You should see the 'Demo-lition' user returned under a key of `user`! (If not,
+debug your `login!` method.) Take note of Demo-lition's `session_token`.
 
-Next, remove the `login` query string param, and run the `fetch` request a few
+Next, remove the `login` query string param and run the `fetch` request a few
 more times:
 
 ```js
@@ -666,7 +666,8 @@ end
 
 Remember that by nesting your routes within `namespace :api`, each route path is
 automatically prefixed with `api/`, each controller must be defined within
-__app/controllers/api/__, and each controller class name must begin with `Api::`.
+__app/controllers/api/__, and each controller class name must begin with
+`Api::`.
 
 Run `rails routes` to verify the routes you have created. Note that the singular
 `resource` before `:session` causes the `show` and `destroy` routes to have no
@@ -707,16 +708,17 @@ Next, it's time to fill out your stubbed actions. Start with the
 using the following pseudocode as guidance:
 
 * `show`
-  * if there is a `current_user`: render `current_user` as JSON
-  * if there is not a `current_user`: render an empty Hash as JSON
+  * if there is a `current_user`: render `current_user` as JSON, under a
+    top-level key of `user`
+  * if there is not a `current_user`: render `{ user: nil }` as JSON
 * `create`
   * pass the credentials from the request body, stored under top level keys of
     `credential` and `password`, to `User::find_by_credentials`; save the result
-    to a `user` variable
-  * if a user with matching credentials was found (`user` is truthy):
-    * login `user`
-    * render `user` as JSON
-  * if no user was found (`user` is falsey):
+    to `@user`
+  * if a user with matching credentials was found (i.e., `@user` is truthy):
+    * login `@user`
+    * render `@user` as JSON, under a top-level key of `user`
+  * if no user was found (i.e., `@user` is falsey):
     * render `{ message: 'The provided credentials were invalid.' }` as JSON,
       with a status of `:unauthorized`
 * `destroy`
@@ -782,7 +784,7 @@ Thankfully, Rails performs resource-based nesting automatically. For requests
 whose body is formatted as JSON (and only those requests), Rails sees if it can
 perform automatic nesting: it looks at the name of the controller that will
 handle the request--say, `Api::BananasController`--and checks if there is an
-Active Record model with a matching name (`Banana`). 
+Active Record model with a matching name (`Banana`).
 
 If there is, Rails will look for top-level keys in the request body matching any
 of the model's attributes (`Banana.attribute_names`), duplicating matching
@@ -793,7 +795,7 @@ By default, then, any `username` or `email` keys in the body of `POST api/users`
 requests will get automatically nested under a top-level key of `user`.
 
 Unfortunately, a `password` will also be included in requests to sign up, and
-that is technically not a `User` attribute--`password_digest` is. 
+that is technically not a `User` attribute--`password_digest` is.
 
 You can override what keys you want Rails to automatically nest by making a call
 to [`wrap_parameters`] at the top of any controller definition. Add the
@@ -840,14 +842,14 @@ Then, make the following request from your Chrome console:
 
 After confirming that your `user_params` work, fill out the `create` action:
 
-* instantiate a new `User` instance, passing in `user_params`, and save it to a
-  `user` variable
-* try to save this `user` to the database with `user.save`
-* if `user.save` returns a `true` (the `user` was saved to the database):
-  * login `user`
-  * render `user` as JSON
-* if `user.save` returns `false` (the `user` failed your validations):
-  * render `{ errors: user.errors.full_messages }` as JSON, with a status of
+* instantiate a new `User` instance, passing in `user_params`, and save it to
+  `@user`
+* try to save this `@user` to the database with `@user.save`
+* if `@user.save` returns a `true` (i.e., the `@user` was saved to the database):
+  * login `@user`
+  * render `@user` as JSON
+* if `@user.save` returns `false` (i.e., the `@user` failed your validations):
+  * render `{ errors: @user.errors.full_messages }` as JSON, with a status of
     `:unprocessable_entity`
 
 Test that your `create` action is working by using the same `fetch` request you
@@ -870,35 +872,40 @@ rendering all of a user's data. Now is a good time to start building Jbuilder
 views for more customized JSON responses.
 
 Within __app__, define a __views__ directory with an __api__ subdirectory. All
-your Jbuilder views will live in this __app/views/api/__ folder. 
+your Jbuilder views will live in this __app/views/api/__ folder.
 
 Next, create a subdirectory __users__ within __app/views/api/__ and create a
-partial called __\_user.json.jbuilder__. This partial takes in a `user` and
-defines the data that should be rendered for that `user` in your JSON responses:
+view template called __show.json.jbuilder__. This template assumes that an
+`@user` instance variable has been defined and structures the data that should
+be rendered for that `@user` in a JSON response:
 
 ```rb
-# app/views/api/users/_user.json.jbuilder
+# app/views/api/users/show.json.jbuilder
 
-json.extract! user, :id, :email, :username
+json.user do
+  json.extract! @user, :id, :email, :username, :created_at, :updated_at
+end
 ```
 
 Next, replace every `render json:` of user data in your controller actions with
-a `render partial:` of the user partial:
+a `render` of the user `show` view. (Don't forget to set an `@user` instance
+variable in your `session#show` action!)
 
 ```rb
 # app/controllers/api/sessions_controller.rb
 
 def show
   if current_user
-    render partial: 'api/users/user', locals: { user: current_user }
+    @user = current_user
+    render 'api/users/show'
   # ...
 end
 
 def create
   # ...
-  if user
+  if @user
     # ...
-    render partial: 'api/users/user', locals: { user: user }
+    render 'api/users/show'
   # ...
 end
 
@@ -906,24 +913,19 @@ end
 
 def create
   # ...
-  if user.save
+  if @user.save
     # ...
-    render partial: 'user', locals: { user: user }
+    render :show
   # ...
 end
 ```
-
-> _Note:_ Since you are currently only ever rendering a single user's data in
-> all of your JSON responses, you are not really using your partial _as_ a
-> partial, i.e., you are not embedding it within another view. By making it a
-> partial, though, you can easily use it within future JSON responses that
-> include additional data without having to refactor your code.
 
 Go ahead and test these new Jbuilder views by making `fetch` requests in your
 Chrome console to hit the three actions you changed: `users#create`,
 `session#show`, and `session#create`. (You may also want to make a logout
 request between testing the login and sign up routes.) Make sure the user data
-returned includes only the `id`, `email`, and `username` attributes.
+returned includes only the `id`, `email`, `username`, `createdAt`, and
+`updatedAt` attributes.
 
 ### CSRF Protection
 
@@ -995,7 +997,7 @@ to obtain an authenticity token from the response headers:
 
 Next, try making two POST requests to your `api/test` route (now you see why
 it's a POST route!). One should include the authenticity token in the request
-headers (at the key of `X-CSRF-TOKEN`, where Rails expects it), and one should
+headers (at the key of `X-CSRF-Token`, where Rails expects it), and one should
 omit the token. Only the one without the token should be rejected for having an
 invalid authenticity token.
 
@@ -1060,8 +1062,11 @@ def unhandled_error(error)
   if request.accepts.first.html?
     raise error
   else
-    @error = error
+    @message = "#{error.class} - #{error.message}"
+    @stack = Rails::BacktraceCleaner.new.clean(error.backtrace)
     render 'api/errors/internal_server_error', status: :internal_server_error
+    
+    logger.error "\n#{@message}:\n\t#{@stack.join("\n\t")}\n"
   end
 end
 ```
@@ -1077,16 +1082,25 @@ nice to get the `better_errors` page with all its debugging tools.)
 
 Otherwise, you render a JSON response containing information about the error.
 You do so using an `internal_server_error` Jbuilder view located in
-__app/views/api/errors/__, saving the error object to an instance variable.
+__app/views/api/errors/__.
 
-Go ahead and create this view:
+First, though, you create custom `@message` and `@stack` instance variables for
+use in the view, using [`Rails::BacktraceCleaner#clean`][backtrace-cleaner] to
+create a more readable stack trace. This method filters out source code files,
+leaving only files from your own app; it also converts absolute file paths to
+relative paths starting from your app's root directory.
+
+After rendering a JSON response, you use [`logger.error`] to log the error
+message and stack trace in your server log.
+
+Go ahead and create the Jbuilder view:
 
 ```rb
 # app/views/api/errors/internal_server_error.json.jbuilder
 
 json.title 'Server Error'
-json.message @error.message
-json.stack @error.full_message unless Rails.env.production?
+json.message @message
+json.stack @stack unless Rails.env.production?
 ```
 
 Now it's time to test! You'll start by testing your invalid authenticity token
@@ -1131,3 +1145,5 @@ In the next part, you will implement the React frontend.
 [strong params]: https://api.rubyonrails.org/v7.0.0/classes/ActionController/StrongParameters.html
 [`wrap-parameters`]: https://api.rubyonrails.org/v7.0.0/classes/ActionController/ParamsWrapper.html
 [`rescue_from`]: https://api.rubyonrails.org/v7.0.0/classes/ActiveSupport/Rescuable/ClassMethods.html#method-i-rescue_from
+[backtrace-cleaner]: https://api.rubyonrails.org/v7.0.0/classes/ActiveSupport/BacktraceCleaner.html#method-i-clean
+[`logger.error`]: https://ruby-doc.org/stdlib-3.0.2/libdoc/logger/rdoc/Logger.html#method-i-error
